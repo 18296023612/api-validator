@@ -1,0 +1,283 @@
+package main
+
+import (
+	"flag"
+	"fmt"
+	"os"
+	"strings"
+)
+
+const version = "1.0.0"
+
+func main() {
+	// Global flags
+	noColorFlag := flag.Bool("no-color", false, "Disable colored output")
+	flag.Parse()
+
+	noColor = *noColorFlag
+
+	if len(os.Args) < 2 {
+		printUsage()
+		os.Exit(0)
+	}
+
+	cmd := os.Args[1]
+
+	switch cmd {
+	case "validate", "v":
+		cmdValidate(os.Args[2:])
+	case "check", "c":
+		cmdCheck(os.Args[2:])
+	case "providers", "p":
+		cmdProviders()
+	case "init":
+		cmdInit(os.Args[2:])
+	case "version", "--version", "-V":
+		fmt.Printf("api-validator v%s\n", version)
+	case "help", "-h", "--help":
+		printUsage()
+	default:
+		fmt.Fprintf(os.Stderr, "Unknown command: %s\n\n", cmd)
+		printUsage()
+		os.Exit(1)
+	}
+}
+
+func printUsage() {
+	fmt.Println(bold("API Gateway Config Validator v" + version))
+	fmt.Println()
+	fmt.Println(dim("Validate and check AI API gateway configurations."))
+	fmt.Println()
+	fmt.Println(bold("Usage:"))
+	fmt.Println("  api-validator validate <config.yaml>    Validate config file")
+	fmt.Println("  api-validator validate <dir/>            Validate all configs in directory")
+	fmt.Println("  api-validator check <config.yaml>        Validate + check provider connectivity")
+	fmt.Println("  api-validator providers                  Show provider template examples")
+	fmt.Println("  api-validator init <project-name>        Generate a sample config")
+	fmt.Println("  api-validator version                    Show version")
+	fmt.Println()
+	fmt.Println(bold("Examples:"))
+	fmt.Println("  api-validator validate config.yaml")
+	fmt.Println("  api-validator validate ./providers/")
+	fmt.Println("  api-validator init my-gateway")
+	fmt.Println()
+}
+
+func cmdValidate(args []string) {
+	if len(args) < 1 {
+		fmt.Fprintf(os.Stderr, "Usage: api-validator validate <path>\n")
+		os.Exit(1)
+	}
+	path := args[0]
+
+	info, err := os.Stat(path)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	if info.IsDir() {
+		// Validate all YAML files in directory
+		entries, _ := os.ReadDir(path)
+		total, passed, failed := 0, 0, 0
+		for _, e := range entries {
+			if e.IsDir() {
+				continue
+			}
+			name := e.Name()
+			if !strings.HasSuffix(name, ".yaml") && !strings.HasSuffix(name, ".yml") {
+				continue
+			}
+			total++
+			fullPath := path + "/" + name
+			cfg, err := LoadConfig(fullPath)
+			if err != nil {
+				fmt.Printf("%s %s: %v\n", red("✖"), name, err)
+				failed++
+				continue
+			}
+			res := ValidateConfig(cfg)
+			if res.Valid {
+				passed++
+			} else {
+				failed++
+			}
+			printResult(res, fullPath)
+		}
+		fmt.Printf("\n%s %d files: %s, %s\n",
+			bold("Summary:"),
+			total,
+			green(fmt.Sprintf("%d passed", passed)),
+			red(fmt.Sprintf("%d failed", failed)),
+		)
+	} else {
+		cfg, err := LoadConfig(path)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error loading config: %v\n", err)
+			os.Exit(1)
+		}
+		res := ValidateConfig(cfg)
+		printResult(res, path)
+		if !res.Valid {
+			os.Exit(1)
+		}
+	}
+}
+
+func cmdCheck(args []string) {
+	fmt.Println(yellow("⚠ Connectivity check requires API keys and network access."))
+	fmt.Println(dim("This feature validates config structure only."))
+	fmt.Println()
+	cmdValidate(args)
+}
+
+func cmdProviders() {
+	fmt.Println(bold("📋 Common Provider Templates"))
+	fmt.Println()
+	fmt.Println(dim("Copy and adapt these for your gateway config:"))
+
+	templates := []struct {
+		Name   string
+		YAML   string
+	}{
+		{
+			"DeepSeek (直连)",
+			`name: deepseek
+type: openai
+base_url: https://api.deepseek.com
+api_key: ${DEEPSEEK_API_KEY}
+models:
+  - deepseek-chat
+  - deepseek-reasoner`,
+		},
+		{
+			"火山引擎 (Doubao/豆包)",
+			`name: volcengine
+type: openai
+base_url: https://ark.cn-beijing.volces.com/api/v3
+api_key: ${VOLC_API_KEY}
+models:
+  - doubao-pro-32k
+  - doubao-lite-128k`,
+		},
+		{
+			"通义千问 (阿里云)",
+			`name: qwen
+type: openai
+base_url: https://dashscope.aliyuncs.com/compatible-mode/v1
+api_key: ${QWEN_API_KEY}
+models:
+  - qwen-plus
+  - qwen-max
+  - qwen-turbo`,
+		},
+		{
+			"智谱 GLM",
+			`name: zhipu
+type: openai
+base_url: https://open.bigmodel.cn/api/paas/v4
+api_key: ${ZHIPU_API_KEY}
+models:
+  - glm-4-plus
+  - glm-4-flash`,
+		},
+		{
+			"百度文心",
+			`name: baidu
+type: openai
+base_url: https://qianfan.baidubce.com/v2
+api_key: ${BAIDU_API_KEY}
+models:
+  - ernie-4.0
+  - ernie-speed`,
+		},
+		{
+			"Mock (无API Key)",
+			`name: mock-provider
+type: mock
+models:
+  - mock-model`,
+		},
+	}
+
+	for _, t := range templates {
+		fmt.Printf("\n%s %s\n", bold("──"), t.Name)
+		fmt.Println(dim(strings.Repeat("─", 40)))
+		fmt.Println(t.YAML)
+	}
+}
+
+func cmdInit(args []string) {
+	projectName := "my-gateway"
+	if len(args) > 0 {
+		projectName = args[0]
+	}
+
+	// Create directory
+	dir := "./" + projectName
+	if err := os.MkdirAll(dir+"/providers", 0755); err != nil {
+		fmt.Fprintf(os.Stderr, "Error creating directory: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Main config
+	mainCfg := `# AI API Gateway Configuration
+# Generated by api-validator init
+server:
+  addr: ":8080"
+  timeout: "120s"
+
+admin:
+  addr: ":8081"
+  timeout: "30s"
+
+auth:
+  enabled: true
+  keys:
+    - "sk-your-api-key-here"
+
+rate_limit:
+  enabled: true
+  rate: 10
+  capacity: 20
+
+cors:
+  allow_origin: "*"
+
+billing:
+  enabled: false
+  currency: "CNY"
+  data_dir: "data"
+  pricing_path: "deploy/pricing.yaml"
+
+# Inline providers
+providers:
+  - name: mock
+    type: mock
+    models:
+      - mock-model
+
+# Or load from directory (uncomment to use)
+# providers_dir: "providers"
+`
+
+	os.WriteFile(dir+"/config.yaml", []byte(mainCfg), 0644)
+
+	// Sample provider
+	sampleProvider := `name: deepseek
+type: openai
+base_url: https://api.deepseek.com
+api_key: ${DEEPSEEK_API_KEY}
+models:
+  - deepseek-chat
+  - deepseek-reasoner
+`
+	os.WriteFile(dir+"/providers/deepseek.yaml", []byte(sampleProvider), 0644)
+
+	fmt.Printf("%s Project initialized at %s/\n", green("✓"), projectName)
+	fmt.Printf("  %sconfig.yaml         — Main configuration\n", dim("├──"))
+	fmt.Printf("  %sproviders/deepseek.yaml — Sample provider\n", dim("└──"))
+	fmt.Println()
+	fmt.Println(dim("Edit the files, then run:"))
+	fmt.Printf("  api-validator validate %s/config.yaml\n", projectName)
+}
