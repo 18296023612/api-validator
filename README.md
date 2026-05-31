@@ -3,6 +3,7 @@
 > **还在为写错 YAML 配置排查半天吗？一条命令搞定。**
 
 [![Release](https://img.shields.io/github/v/release/18296023612/api-validator)](https://github.com/18296023612/api-validator/releases)
+[![CI](https://github.com/18296023612/api-validator/actions/workflows/go-ci.yml/badge.svg)](https://github.com/18296023612/api-validator/actions/workflows/go-ci.yml)
 [![Go](https://img.shields.io/badge/Go-1.21%2B-blue)](https://go.dev/)
 [![License](https://img.shields.io/badge/License-MIT-green)](LICENSE)
 
